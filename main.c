@@ -158,7 +158,8 @@ void ClearEdit(HWND hEditTid) {
     Log("已清空输入框");
 }
 
-LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPSTR lParam) {
+// 【修复】这里是最后一个错误！！！LPARAM 不是 LPSTR！！！
+LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch(msg) {
         case WM_CREATE:
             CreateWindowA("STATIC", "ExHeader路径:", WS_CHILD|WS_VISIBLE,20,20,100,20,hWnd,NULL,NULL,NULL);
