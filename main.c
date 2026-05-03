@@ -61,7 +61,7 @@ int BackupFile(const char* path) {
     fwrite(buf, 1, EXHEADER_SIZE, fpDst);
     fclose(fpSrc);
     fclose(fpDst);
-    Log("已备份文件");
+    Log("已备份原文件");
     return 1;
 }
 
@@ -107,10 +107,10 @@ void BrowseFile(HWND hEditPath) {
         memset(g_origTid, 0, sizeof(g_origTid));
         int ret = ReadExHeaderTID(g_filePath, g_origTid);
         if (ret == -1) Log("错误：无法打开文件");
-        else if (ret == -2) Log("错误：不是2048字节ExHeader");
+        else if (ret == -2) Log("错误：无效的ExHeader文件");
         else {
             char tmp[64];
-            snprintf(tmp, sizeof(tmp), "原始ID: %s", g_origTid);
+            snprintf(tmp, sizeof(tmp), "原始TitleID: %s", g_origTid);
             Log(tmp);
         }
     }
@@ -124,8 +124,8 @@ void DoModify(HWND hEditTID) {
     char newTID[32];
     GetWindowTextA(hEditTID, newTID, 32);
     if (!ValidateTitleID(newTID)) {
-        MessageBoxA(NULL, "TitleID必须是16位十六进制", "错误", MB_ICONERROR);
-        Log("错误：格式非法");
+        MessageBoxA(NULL, "必须是16位十六进制字符", "错误", MB_ICONERROR);
+        Log("错误：ID格式不正确");
         return;
     }
     Log("开始修改...");
@@ -146,11 +146,11 @@ void DoModify(HWND hEditTID) {
 
 void CopyOrigToEdit(HWND hEditTid) {
     if (strlen(g_origTid)!=16) {
-        MessageBoxA(NULL, "请先加载文件", "提示", MB_ICONINFORMATION);
+        MessageBoxA(NULL, "请先加载有效文件", "提示", MB_ICONINFORMATION);
         return;
     }
     SetWindowTextA(hEditTid, g_origTid);
-    Log("已复制原始ID");
+    Log("已复制原始ID到输入框");
 }
 
 void ClearEdit(HWND hEditTid) {
@@ -158,17 +158,20 @@ void ClearEdit(HWND hEditTid) {
     Log("已清空输入框");
 }
 
-LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPSTR lParam) {
     switch(msg) {
         case WM_CREATE:
-            CreateWindowA("STATIC", "ExHeader路径:", WS_CHILD|WS_VISIBLE,20,20,120,20,hWnd,NULL,NULL,NULL);
-            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,150,18,320,24,hWnd,(HMENU)IDC_EDIT_PATH,NULL,NULL);
+            CreateWindowA("STATIC", "ExHeader路径:", WS_CHILD|WS_VISIBLE,20,20,100,20,hWnd,NULL,NULL,NULL);
+            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,120,18,350,24,hWnd,(HMENU)IDC_EDIT_PATH,NULL,NULL);
             CreateWindowA("BUTTON", "浏览...", WS_CHILD|WS_VISIBLE,480,18,80,26,hWnd,(HMENU)IDC_BTN_BROWSE,NULL,NULL);
-            CreateWindowA("STATIC", "新16位TitleID:", WS_CHILD|WS_VISIBLE,20,70,140,20,hWnd,NULL,NULL,NULL);
-            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,170,68,200,24,hWnd,(HMENU)IDC_EDIT_TID,NULL,NULL);
-            CreateWindowA("BUTTON", "复制原始ID", WS_CHILD|WS_VISIBLE,380,65,120,30,hWnd,(HMENU)IDC_BTN_COPY_ORIG,NULL,NULL);
-            CreateWindowA("BUTTON", "清空", WS_CHILD|WS_VISIBLE,510,65,80,30,hWnd,(HMENU)IDC_BTN_CLEAR,NULL,NULL);
-            CreateWindowA("BUTTON", "一键修改", WS_CHILD|WS_VISIBLE,200,120,180,35,hWnd,(HMENU)IDC_BTN_MODIFY,NULL,NULL);
+            
+            CreateWindowA("STATIC", "新16位TitleID:", WS_CHILD|WS_VISIBLE,20,70,100,20,hWnd,NULL,NULL,NULL);
+            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,120,68,200,24,hWnd,(HMENU)IDC_EDIT_TID,NULL,NULL);
+            
+            CreateWindowA("BUTTON", "复制原始ID", WS_CHILD|WS_VISIBLE,330,65,100,30,hWnd,(HMENU)IDC_BTN_COPY_ORIG,NULL,NULL);
+            CreateWindowA("BUTTON", "清空", WS_CHILD|WS_VISIBLE,440,65,60,30,hWnd,(HMENU)IDC_BTN_CLEAR,NULL,NULL);
+            
+            CreateWindowA("BUTTON", "一键修改", WS_CHILD|WS_VISIBLE,180,120,200,40,hWnd,(HMENU)IDC_BTN_MODIFY,NULL,NULL);
             return 0;
         case WM_COMMAND: {
             HWND path = GetDlgItem(hWnd, IDC_EDIT_PATH);
@@ -190,11 +193,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     AllocConsole();
+    system("chcp 936");
     g_logConsole = freopen("CONOUT$", "w", stdout);
 
     Log("===== 3DS ExHeader TitleID 修改工具 =====");
-    Log("中文界面 | 控制台日志 | 自动备份");
-    Log("GitHub自动编译版\n");
+    Log("中文GUI + 中文控制台 | 无乱码版");
+    Log("自动备份 | 复制ID | 一键修改\n");
 
     WNDCLASSA wc = {0};
     wc.lpfnWndProc = WndProc;
@@ -205,7 +209,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
 
     HWND hWnd = CreateWindowExA(0, wc.lpszClassName, "3DS ExHeader 修改工具",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        CW_USEDEFAULT, CW_USEDEFAULT, 630, 240,
+        CW_USEDEFAULT, CW_USEDEFAULT, 600, 220,
         NULL, NULL, hInst, NULL);
 
     ShowWindow(hWnd, nShow);
