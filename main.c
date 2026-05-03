@@ -73,12 +73,11 @@ int BackupFile(const char* path)
     unsigned char buf[EXHEADER_SIZE];
     fread(buf, 1, EXHEADER_SIZE, fpSrc);
     fwrite(buf, 1, EXHEADER_SIZE, fpDst);
-
     fclose(fpSrc);
     fclose(fpDst);
 
     wchar_t logMsg[512];
-    swprintf(logMsg, L"已备份原文件到: %S", bakPath);
+    swprintf(logMsg, 511, L"已备份原文件到: %hs", bakPath);
     Log(logMsg);
     return 1;
 }
@@ -89,7 +88,7 @@ int ReadExHeaderTID(const char* path, char* outTID)
     if (!fp) return -1;
 
     fseek(fp, 0, SEEK_END);
-    if (ftell(fp) != EXHEADER_SIZE)
+    if (ft(fp) != EXHEADER_SIZE)
     {
         fclose(fp);
         return -2;
@@ -134,7 +133,6 @@ void BrowseFile(HWND hEditPath, HWND hEditTid)
     {
         WideCharToMultiByte(CP_ACP, 0, szFile, -1, g_filePath, 512, NULL, NULL);
         SetWindowTextW(hEditPath, szFile);
-
         Log(L"已选择文件");
 
         memset(g_origTid, 0, sizeof(g_origTid));
@@ -146,7 +144,7 @@ void BrowseFile(HWND hEditPath, HWND hEditTid)
         else
         {
             wchar_t tidLog[64];
-            swprintf(tidLog, L"原始 TitleID: %S", g_origTid);
+            swprintf(tidLog, 63, L"原始 TitleID: %hs", g_origTid);
             Log(tidLog);
         }
     }
@@ -184,7 +182,7 @@ void DoModify(HWND hEditTID)
     ReadExHeaderTID(g_filePath, finalTID);
 
     wchar_t logMsg[128];
-    swprintf(logMsg, L"修改成功！新 TitleID: %S", finalTID);
+    swprintf(logMsg, 127, L"修改成功！新 TitleID: %hs", finalTID);
     Log(logMsg);
     MessageBoxW(NULL, L"修改成功！已自动备份", L"完成", MB_OK);
 }
@@ -234,7 +232,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         return 0;
     }
-    case WM_DESTROY: PostQuitMessage(0); return 0;
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0;
     }
     return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
