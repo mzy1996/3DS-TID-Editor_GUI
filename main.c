@@ -88,7 +88,7 @@ int ReadExHeaderTID(const char* path, char* outTID)
     if (!fp) return -1;
 
     fseek(fp, 0, SEEK_END);
-    if (ft(fp) != EXHEADER_SIZE)
+    if (ftell(fp) != EXHEADER_SIZE)
     {
         fclose(fp);
         return -2;
