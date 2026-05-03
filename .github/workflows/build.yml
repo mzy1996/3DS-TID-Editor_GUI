@@ -1,25 +1,20 @@
-name: 编译 ExHeader TitleID 工具
-
+name: 编译 ExHeader 工具
 on:
-  workflow_dispatch:    # 允许手动点一下运行编译
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - name: 下载代码
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: 安装 MinGW 编译器
-        run: |
-          choco install mingw -y
-          echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: 安装 MinGW
+        run: choco install mingw -y
 
-      - name: 编译生成 EXE
-        run: |
-          gcc -static main.c -o ExhTitleID_GUI.exe -luser32 -mwindows
+      - name: 编译 EXE
+        run: gcc -static -mconsole -municode ExhTitleID_GUI.c -o ExhTitleID_GUI.exe -luser32
 
-      - name: 上传成品 EXE 供下载
+      - name: 上传成品
         uses: actions/upload-artifact@v4
         with:
           name: ExhTitleID_GUI
