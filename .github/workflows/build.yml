@@ -13,8 +13,6 @@ jobs:
 
       - name: 编译 EXE
         run: gcc -static -mconsole main.c -o ExhTitleID_GUI.exe -luser32 -lcomdlg32
-          windres manifest.xml -o manifest.o
-          gcc -static main.c manifest.o -o ExhTitleID_GUI.exe -luser32 -lcomdlg32
 
       - name: 上传成品
         uses: actions/upload-artifact@v4
