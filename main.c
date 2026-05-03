@@ -158,7 +158,6 @@ void ClearEdit(HWND hEditTid) {
     Log("已清空输入框");
 }
 
-// 【修复】这里是最后一个错误！！！LPARAM 不是 LPSTR！！！
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch(msg) {
         case WM_CREATE:
@@ -194,8 +193,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     AllocConsole();
-    system("chcp 936");
     g_logConsole = freopen("CONOUT$", "w", stdout);
+    SetConsoleOutputCP(CP_UTF8);
 
     Log("===== 3DS ExHeader TitleID 修改工具 =====");
     Log("中文GUI + 中文控制台 | 无乱码版");
