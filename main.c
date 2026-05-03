@@ -61,7 +61,7 @@ int BackupFile(const char* path) {
     fwrite(buf, 1, EXHEADER_SIZE, fpDst);
     fclose(fpSrc);
     fclose(fpDst);
-    Log("备份成功");
+    Log("Backup completed");
     return 1;
 }
 
@@ -96,21 +96,21 @@ void BrowseFile(HWND hEditPath) {
     ofn.hwndOwner = NULL;
     ofn.lpstrFile = szFile;
     ofn.nMaxFile = 512;
-    ofn.lpstrFilter = "ExHeader 文件\0*.bin;*.header\0所有文件\0*.*\0";
+    ofn.lpstrFilter = "ExHeader File\0*.bin;*.header\0All Files\0*.*\0";
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
 
     if (GetOpenFileNameA(&ofn)) {
         strcpy(g_filePath, szFile);
         SetWindowTextA(hEditPath, szFile);
-        Log("已选择文件");
+        Log("File selected");
         
         memset(g_origTid, 0, sizeof(g_origTid));
         int ret = ReadExHeaderTID(g_filePath, g_origTid);
-        if (ret == -1) Log("错误：无法打开文件");
-        else if (ret == -2) Log("错误：无效的ExHeader");
+        if (ret == -1) Log("Error: Cannot open file");
+        else if (ret == -2) Log("Error: Invalid ExHeader");
         else {
             char tmp[64];
-            snprintf(tmp, sizeof(tmp), "原始ID: %s", g_origTid);
+            snprintf(tmp, sizeof(tmp), "Original ID: %s", g_origTid);
             Log(tmp);
         }
     }
@@ -118,60 +118,60 @@ void BrowseFile(HWND hEditPath) {
 
 void DoModify(HWND hEditTID) {
     if (!*g_filePath) {
-        MessageBoxA(NULL, "请先选择文件", "提示", MB_ICONWARNING);
+        MessageBoxA(NULL, "Please select a file first", "Warning", MB_ICONWARNING);
         return;
     }
     char newTID[32];
     GetWindowTextA(hEditTID, newTID, 32);
     if (!ValidateTitleID(newTID)) {
-        MessageBoxA(NULL, "必须是16位十六进制", "错误", MB_ICONERROR);
-        Log("错误：ID格式非法");
+        MessageBoxA(NULL, "Must be 16 hex characters", "Error", MB_ICONERROR);
+        Log("Error: Invalid ID format");
         return;
     }
-    Log("开始修改...");
+    Log("Starting modification...");
     BackupFile(g_filePath);
     
     if (!WriteExHeaderTID(g_filePath, newTID)) {
-        Log("错误：写入失败");
-        MessageBoxA(NULL, "写入失败", "错误", MB_ICONERROR);
+        Log("Error: Write failed");
+        MessageBoxA(NULL, "Write failed", "Error", MB_ICONERROR);
         return;
     }
     char finalID[17];
     ReadExHeaderTID(g_filePath, finalID);
     char msg[128];
-    snprintf(msg, sizeof(msg), "修改成功: %s", finalID);
+    snprintf(msg, sizeof(msg), "Success! New ID: %s", finalID);
     Log(msg);
-    MessageBoxA(NULL, "修改成功！已备份", "完成", MB_OK);
+    MessageBoxA(NULL, "Modify success! Backup created", "Success", MB_OK);
 }
 
 void CopyOrigToEdit(HWND hEditTid) {
     if (strlen(g_origTid)!=16) {
-        MessageBoxA(NULL, "请先加载文件", "提示", MB_ICONINFORMATION);
+        MessageBoxA(NULL, "Please load a file first", "Info", MB_ICONINFORMATION);
         return;
     }
     SetWindowTextA(hEditTid, g_origTid);
-    Log("已复制原始ID");
+    Log("Original ID copied");
 }
 
 void ClearEdit(HWND hEditTid) {
     SetWindowTextA(hEditTid, "");
-    Log("已清空");
+    Log("Input cleared");
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch(msg) {
         case WM_CREATE:
-            CreateWindowA("STATIC", "文件路径:", WS_CHILD|WS_VISIBLE,20,20,80,20,hWnd,NULL,NULL,NULL);
+            CreateWindowA("STATIC", "File Path:", WS_CHILD|WS_VISIBLE,20,20,80,20,hWnd,NULL,NULL,NULL);
             CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,100,18,350,24,hWnd,(HMENU)IDC_EDIT_PATH,NULL,NULL);
-            CreateWindowA("BUTTON", "浏览...", WS_CHILD|WS_VISIBLE,460,18,80,26,hWnd,(HMENU)IDC_BTN_BROWSE,NULL,NULL);
+            CreateWindowA("BUTTON", "Browse", WS_CHILD|WS_VISIBLE,460,18,80,26,hWnd,(HMENU)IDC_BTN_BROWSE,NULL,NULL);
             
-            CreateWindowA("STATIC", "TitleID:", WS_CHILD|WS_VISIBLE,20,70,80,20,hWnd,NULL,NULL,NULL);
+            CreateWindowA("STATIC", "Title ID:", WS_CHILD|WS_VISIBLE,20,70,80,20,hWnd,NULL,NULL,NULL);
             CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,100,68,200,24,hWnd,(HMENU)IDC_EDIT_TID,NULL,NULL);
             
-            CreateWindowA("BUTTON", "复制原始ID", WS_CHILD|WS_VISIBLE,310,65,100,30,hWnd,(HMENU)IDC_BTN_COPY_ORIG,NULL,NULL);
-            CreateWindowA("BUTTON", "清空", WS_CHILD|WS_VISIBLE,420,65,60,30,hWnd,(HMENU)IDC_BTN_CLEAR,NULL,NULL);
+            CreateWindowA("BUTTON", "Copy ID", WS_CHILD|WS_VISIBLE,310,65,100,30,hWnd,(HMENU)IDC_BTN_COPY_ORIG,NULL,NULL);
+            CreateWindowA("BUTTON", "Clear", WS_CHILD|WS_VISIBLE,420,65,60,30,hWnd,(HMENU)IDC_BTN_CLEAR,NULL,NULL);
             
-            CreateWindowA("BUTTON", "一键修改", WS_CHILD|WS_VISIBLE,180,120,200,40,hWnd,(HMENU)IDC_BTN_MODIFY,NULL,NULL);
+            CreateWindowA("BUTTON", "MODIFY", WS_CHILD|WS_VISIBLE,180,120,200,40,hWnd,(HMENU)IDC_BTN_MODIFY,NULL,NULL);
             return 0;
         case WM_COMMAND: {
             HWND path = GetDlgItem(hWnd, IDC_EDIT_PATH);
@@ -193,12 +193,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     AllocConsole();
-    system("chcp 936");
     g_logConsole = freopen("CONOUT$", "w", stdout);
 
-    Log("===== 3DS ExHeader 修改工具 =====");
-    Log("中文界面 | 中文控制台 | 稳定版");
-    Log("自动备份 | 一键修改\n");
+    Log("===== 3DS ExHeader Editor =====");
+    Log("GitHub Auto Build");
+    Log("Stable Version\n");
 
     WNDCLASSA wc = {0};
     wc.lpfnWndProc = WndProc;
@@ -207,7 +206,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     RegisterClassA(&wc);
 
-    HWND hWnd = CreateWindowExA(0, wc.lpszClassName, "3DS ExHeader 修改工具",
+    HWND hWnd = CreateWindowExA(0, wc.lpszClassName, "3DS ExHeader Editor",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
         CW_USEDEFAULT, CW_USEDEFAULT, 600, 240,
         NULL, NULL, hInst, NULL);
