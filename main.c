@@ -4,11 +4,8 @@
 #include <string.h>
 #include <ctype.h>
 
-#pragma execution_character_set("utf-8")
-
 #define EXHEADER_SIZE    0x800
 #define TITLEID_OFFSET   0x100
-#define TITLEID_BYTES    8
 
 #define IDC_BTN_BROWSE    101
 #define IDC_EDIT_PATH     102
@@ -21,23 +18,20 @@ char g_filePath[512] = {0};
 char g_origTid[17]   = {0};
 FILE* g_logConsole   = NULL;
 
-void Log(const wchar_t* msg)
-{
+void Log(const char* msg) {
     if (g_logConsole) {
-        fwprintf(g_logConsole, L"%s\n", msg);
+        fprintf(g_logConsole, "%s\n", msg);
         fflush(g_logConsole);
     }
 }
 
-int ValidateTitleID(const char* tid)
-{
+int ValidateTitleID(const char* tid) {
     if (strlen(tid) != 16) return 0;
     for (int i=0;i<16;i++) if (!isxdigit(tid[i])) return 0;
     return 1;
 }
 
-void HexToLE(const char* hexStr, unsigned char* out)
-{
+void HexToLE(const char* hexStr, unsigned char* out) {
     memset(out, 0, 8);
     for (int i=0;i<8;i++) {
         unsigned char b;
@@ -46,15 +40,13 @@ void HexToLE(const char* hexStr, unsigned char* out)
     }
 }
 
-void LEToHex(const unsigned char* buf, char* out)
-{
+void LEToHex(const unsigned char* buf, char* out) {
     memset(out, 0, 17);
     for (int i=0;i<8;i++)
         sprintf(&out[i*2], "%02X", buf[7-i]);
 }
 
-int BackupFile(const char* path)
-{
+int BackupFile(const char* path) {
     char bakPath[512];
     snprintf(bakPath, sizeof(bakPath), "%s.bak", path);
     FILE* fpSrc = fopen(path, "rb");
@@ -69,14 +61,11 @@ int BackupFile(const char* path)
     fwrite(buf, 1, EXHEADER_SIZE, fpDst);
     fclose(fpSrc);
     fclose(fpDst);
-    wchar_t logMsg[512];
-    swprintf(logMsg, 511, L"已备份: %hs", bakPath);
-    Log(logMsg);
+    Log("已备份文件");
     return 1;
 }
 
-int ReadExHeaderTID(const char* path, char* outTID)
-{
+int ReadExHeaderTID(const char* path, char* outTID) {
     FILE* fp = fopen(path, "rb");
     if (!fp) return -1;
     fseek(fp, 0, SEEK_END);
@@ -89,8 +78,7 @@ int ReadExHeaderTID(const char* path, char* outTID)
     return 0;
 }
 
-int WriteExHeaderTID(const char* path, const char* newTID)
-{
+int WriteExHeaderTID(const char* path, const char* newTID) {
     FILE* fp = fopen(path, "r+b");
     if (!fp) return 0;
     unsigned char buf[8];
@@ -101,127 +89,123 @@ int WriteExHeaderTID(const char* path, const char* newTID)
     return 1;
 }
 
-void BrowseFile(HWND hEditPath, HWND hEditTid)
-{
-    OPENFILENAMEW ofn = {0};
-    wchar_t szFile[512] = {0};
+void BrowseFile(HWND hEditPath) {
+    char szFile[512] = {0};
+    OPENFILENAMEA ofn = {0};
     ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = hEditPath;
+    ofn.hwndOwner = NULL;
     ofn.lpstrFile = szFile;
     ofn.nMaxFile = 512;
-    ofn.lpstrFilter = L"ExHeader 文件\0*.bin;*.header\0所有文件\0*.*\0";
+    ofn.lpstrFilter = "ExHeader 文件\0*.bin;*.header\0所有文件\0*.*\0";
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
 
-    if (GetOpenFileNameW(&ofn)) {
-        WideCharToMultiByte(CP_ACP, 0, szFile, -1, g_filePath, 512, NULL, NULL);
-        SetWindowTextW(hEditPath, szFile);
-        Log(L"已选择文件");
+    if (GetOpenFileNameA(&ofn)) {
+        strcpy(g_filePath, szFile);
+        SetWindowTextA(hEditPath, szFile);
+        Log("已选择文件");
+        
         memset(g_origTid, 0, sizeof(g_origTid));
         int ret = ReadExHeaderTID(g_filePath, g_origTid);
-        if (ret==-1) Log(L"错误：无法打开文件");
-        else if (ret==-2) Log(L"错误：无效的ExHeader");
+        if (ret == -1) Log("错误：无法打开文件");
+        else if (ret == -2) Log("错误：不是2048字节ExHeader");
         else {
-            wchar_t tmp[64];
-            swprintf(tmp, 63, L"原始ID: %hs", g_origTid);
+            char tmp[64];
+            snprintf(tmp, sizeof(tmp), "原始ID: %s", g_origTid);
             Log(tmp);
         }
     }
 }
 
-void DoModify(HWND hEditTID)
-{
+void DoModify(HWND hEditTID) {
     if (!*g_filePath) {
-        MessageBoxW(NULL, L"请先选择文件", L"提示", MB_ICONWARNING);
+        MessageBoxA(NULL, "请先选择ExHeader文件", "提示", MB_ICONWARNING);
         return;
     }
     char newTID[32];
     GetWindowTextA(hEditTID, newTID, 32);
     if (!ValidateTitleID(newTID)) {
-        MessageBoxW(NULL, L"必须是16位十六进制", L"错误", MB_ICONERROR);
-        Log(L"错误：格式不正确");
+        MessageBoxA(NULL, "TitleID必须是16位十六进制", "错误", MB_ICONERROR);
+        Log("错误：格式非法");
         return;
     }
-    Log(L"开始处理...");
+    Log("开始修改...");
     BackupFile(g_filePath);
+    
     if (!WriteExHeaderTID(g_filePath, newTID)) {
-        Log(L"写入失败");
-        MessageBoxW(NULL, L"写入失败", L"错误", MB_ICONERROR);
+        Log("错误：写入失败");
+        MessageBoxA(NULL, "写入失败", "错误", MB_ICONERROR);
         return;
     }
     char finalID[17];
     ReadExHeaderTID(g_filePath, finalID);
-    wchar_t msg[128];
-    swprintf(msg, 127, L"成功！新ID: %hs", finalID);
+    char msg[128];
+    snprintf(msg, sizeof(msg), "修改成功！新ID: %s", finalID);
     Log(msg);
-    MessageBoxW(NULL, L"修改成功！已备份", L"完成", MB_OK);
+    MessageBoxA(NULL, "修改成功！已自动备份", "完成", MB_OK);
 }
 
-void CopyOrigToEdit(HWND hEditTid)
-{
+void CopyOrigToEdit(HWND hEditTid) {
     if (strlen(g_origTid)!=16) {
-        MessageBoxW(NULL, L"请先加载文件", L"提示", MB_ICONINFORMATION);
+        MessageBoxA(NULL, "请先加载文件", "提示", MB_ICONINFORMATION);
         return;
     }
     SetWindowTextA(hEditTid, g_origTid);
-    Log(L"已复制原始ID到输入框");
+    Log("已复制原始ID");
 }
 
-void ClearEdit(HWND hEditTid)
-{
+void ClearEdit(HWND hEditTid) {
     SetWindowTextA(hEditTid, "");
-    Log(L"已清空输入");
+    Log("已清空输入框");
 }
 
-LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
+LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch(msg) {
         case WM_CREATE:
-            CreateWindowW(L"STATIC", L"ExHeader 路径:", WS_CHILD|WS_VISIBLE, 20,20,120,20,hWnd,NULL,NULL,NULL);
-            CreateWindowW(L"EDIT", L"", WS_CHILD|WS_VISIBLE|WS_BORDER,150,18,320,24,hWnd,(HMENU)IDC_EDIT_PATH,NULL,NULL);
-            CreateWindowW(L"BUTTON", L"浏览...", WS_CHILD|WS_VISIBLE,480,18,80,26,hWnd,(HMENU)IDC_BTN_BROWSE,NULL,NULL);
-            CreateWindowW(L"STATIC", L"新 TitleID:", WS_CHILD|WS_VISIBLE,20,70,140,20,hWnd,NULL,NULL,NULL);
-            CreateWindowW(L"EDIT", L"", WS_CHILD|WS_VISIBLE|WS_BORDER,170,68,200,24,hWnd,(HMENU)IDC_EDIT_TID,NULL,NULL);
-            CreateWindowW(L"BUTTON", L"复制原始ID", WS_CHILD|WS_VISIBLE,380,65,120,30,hWnd,(HMENU)IDC_BTN_COPY_ORIG,NULL,NULL);
-            CreateWindowW(L"BUTTON", L"清空", WS_CHILD|WS_VISIBLE,510,65,80,30,hWnd,(HMENU)IDC_BTN_CLEAR,NULL,NULL);
-            CreateWindowW(L"BUTTON", L"一键修改", WS_CHILD|WS_VISIBLE,200,120,180,35,hWnd,(HMENU)IDC_BTN_MODIFY,NULL,NULL);
+            CreateWindowA("STATIC", "ExHeader路径:", WS_CHILD|WS_VISIBLE,20,20,120,20,hWnd,NULL,NULL,NULL);
+            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,150,18,320,24,hWnd,(HMENU)IDC_EDIT_PATH,NULL,NULL);
+            CreateWindowA("BUTTON", "浏览...", WS_CHILD|WS_VISIBLE,480,18,80,26,hWnd,(HMENU)IDC_BTN_BROWSE,NULL,NULL);
+            CreateWindowA("STATIC", "新16位TitleID:", WS_CHILD|WS_VISIBLE,20,70,140,20,hWnd,NULL,NULL,NULL);
+            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,170,68,200,24,hWnd,(HMENU)IDC_EDIT_TID,NULL,NULL);
+            CreateWindowA("BUTTON", "复制原始ID", WS_CHILD|WS_VISIBLE,380,65,120,30,hWnd,(HMENU)IDC_BTN_COPY_ORIG,NULL,NULL);
+            CreateWindowA("BUTTON", "清空", WS_CHILD|WS_VISIBLE,510,65,80,30,hWnd,(HMENU)IDC_BTN_CLEAR,NULL,NULL);
+            CreateWindowA("BUTTON", "一键修改", WS_CHILD|WS_VISIBLE,200,120,180,35,hWnd,(HMENU)IDC_BTN_MODIFY,NULL,NULL);
             return 0;
         case WM_COMMAND: {
-            HWND a = GetDlgItem(hWnd, IDC_EDIT_PATH);
-            HWND b = GetDlgItem(hWnd, IDC_EDIT_TID);
+            HWND path = GetDlgItem(hWnd, IDC_EDIT_PATH);
+            HWND tid = GetDlgItem(hWnd, IDC_EDIT_TID);
             switch(LOWORD(wParam)) {
-                case IDC_BTN_BROWSE: BrowseFile(a,b); break;
-                case IDC_BTN_MODIFY: DoModify(b); break;
-                case IDC_BTN_COPY_ORIG: CopyOrigToEdit(b); break;
-                case IDC_BTN_CLEAR: ClearEdit(b); break;
+                case IDC_BTN_BROWSE: BrowseFile(path); break;
+                case IDC_BTN_MODIFY: DoModify(tid); break;
+                case IDC_BTN_COPY_ORIG: CopyOrigToEdit(tid); break;
+                case IDC_BTN_CLEAR: ClearEdit(tid); break;
             }
             return 0;
         }
-        case WM_DESTROY: PostQuitMessage(0); return 0;
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            return 0;
     }
-    return DefWindowProcW(hWnd,msg,wParam,lParam);
+    return DefWindowProcA(hWnd, msg, wParam, lParam);
 }
 
-int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, LPWSTR lpCmd, int nShow)
-{
+int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     AllocConsole();
-    system("chcp 65001");
-    g_logConsole = _wfreopen(L"CONOUT$", L"w, ccs=UTF-8", stdout);
+    g_logConsole = freopen("CONOUT$", "w", stdout);
 
-    Log(L"===== 3DS ExHeader TitleID 修改工具 =====");
-    Log(L"中文GUI + 中文控制台 | 无乱码稳定版");
-    Log(L"自动备份 | 复制ID | 一键修改\n");
+    Log("===== 3DS ExHeader TitleID 修改工具 =====");
+    Log("中文界面 | 控制台日志 | 自动备份");
+    Log("GitHub自动编译版\n");
 
-    const wchar_t cls[] = L"ExhTool";
-    WNDCLASSW wc = {0};
+    WNDCLASSA wc = {0};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInst;
-    wc.lpszClassName = cls;
-    wc.hCursor = LoadCursor(0, IDC_ARROW);
-    RegisterClassW(&wc);
+    wc.lpszClassName = "ExhTool";
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    RegisterClassA(&wc);
 
-    HWND hWnd = CreateWindowExW(0, cls, L"3DS ExHeader 修改工具",
+    HWND hWnd = CreateWindowExA(0, wc.lpszClassName, "3DS ExHeader 修改工具",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        CW_USEDEFAULT, CW_USEDEFAULT, 630, 230,
+        CW_USEDEFAULT, CW_USEDEFAULT, 630, 240,
         NULL, NULL, hInst, NULL);
 
     ShowWindow(hWnd, nShow);
