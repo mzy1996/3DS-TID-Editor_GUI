@@ -12,7 +12,7 @@ jobs:
         run: choco install mingw -y
 
       - name: 编译 EXE
-        run: gcc -static -mconsole -municode ExhTitleID_GUI.c -o ExhTitleID_GUI.exe -luser32
+        run: gcc -static -mconsole -municode main.c -o ExhTitleID_GUI.exe -luser32
 
       - name: 上传成品
         uses: actions/upload-artifact@v4
