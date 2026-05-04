@@ -4,8 +4,8 @@
 #include <string.h>
 #include <ctype.h>
 
-#define EXHEADER_SIZE    0x800
-#define TITLEID_OFFSET   0x100
+#define TITLEID_BYTES 8
+#define NCCH_TITLEID_OFFSET 0x118
 
 #define IDC_BTN_BROWSE    101
 #define IDC_EDIT_PATH     102
@@ -46,46 +46,54 @@ void LEToHex(const unsigned char* buf, char* out) {
         sprintf(&out[i*2], "%02X", buf[7-i]);
 }
 
-int BackupFile(const char* path) {
-    char bakPath[512];
-    snprintf(bakPath, sizeof(bakPath), "%s.bak", path);
-    FILE* fpSrc = fopen(path, "rb");
-    FILE* fpDst = fopen(bakPath, "wb");
-    if (!fpSrc || !fpDst) {
-        if (fpSrc) fclose(fpSrc);
-        if (fpDst) fclose(fpDst);
-        return 0;
-    }
-    unsigned char buf[EXHEADER_SIZE];
-    fread(buf, 1, EXHEADER_SIZE, fpSrc);
-    fwrite(buf, 1, EXHEADER_SIZE, fpDst);
-    fclose(fpSrc);
-    fclose(fpDst);
-    Log("Backup completed");
-    return 1;
-}
-
-int ReadExHeaderTID(const char* path, char* outTID) {
+int ReadTitleID(const char* path, char* out) {
     FILE* fp = fopen(path, "rb");
     if (!fp) return -1;
-    fseek(fp, 0, SEEK_END);
-    if (ftell(fp) != EXHEADER_SIZE) { fclose(fp); return -2; }
-    fseek(fp, TITLEID_OFFSET, SEEK_SET);
+
     unsigned char buf[8];
-    fread(buf,1,8,fp);
+    fseek(fp, NCCH_TITLEID_OFFSET, SEEK_SET);
+    if (fread(buf, 1, 8, fp) != 8) {
+        fclose(fp);
+        return -2;
+    }
     fclose(fp);
-    LEToHex(buf, outTID);
+    LEToHex(buf, out);
     return 0;
 }
 
-int WriteExHeaderTID(const char* path, const char* newTID) {
-    FILE* fp = fopen(path, "r+b");
+int CreateNewFileWithNewTitleID(const char* srcPath, const char* newID) {
+    char newPath[512];
+    snprintf(newPath, sizeof(newPath), "%s_new.bin", srcPath);
+
+    FILE* in = fopen(srcPath, "rb");
+    FILE* out = fopen(newPath, "wb");
+    if (!in || !out) {
+        if (in) fclose(in);
+        if (out) fclose(out);
+        return 0;
+    }
+
+    char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, 4096, in)) > 0) {
+        fwrite(buf, 1, n, out);
+    }
+
+    fclose(in);
+    fclose(out);
+
+    FILE* fp = fopen(newPath, "r+b");
     if (!fp) return 0;
-    unsigned char buf[8];
-    HexToLE(newTID, buf);
-    fseek(fp, TITLEID_OFFSET, SEEK_SET);
-    fwrite(buf,1,8,fp);
+
+    unsigned char tidBuf[8];
+    HexToLE(newID, tidBuf);
+
+    fseek(fp, NCCH_TITLEID_OFFSET, SEEK_SET);
+    fwrite(tidBuf, 1, 8, fp);
     fclose(fp);
+
+    Log("New file created:");
+    Log(newPath);
     return 1;
 }
 
@@ -96,91 +104,72 @@ void BrowseFile(HWND hEditPath) {
     ofn.hwndOwner = NULL;
     ofn.lpstrFile = szFile;
     ofn.nMaxFile = 512;
-    ofn.lpstrFilter = "ExHeader File\0*.bin;*.header\0All Files\0*.*\0";
+    ofn.lpstrFilter = "3DS/CIA Files\0*.3ds;*.cia\0All Files\0*.*\0";
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
 
     if (GetOpenFileNameA(&ofn)) {
         strcpy(g_filePath, szFile);
         SetWindowTextA(hEditPath, szFile);
-        Log("File selected");
-        
+        Log("File loaded");
+
         memset(g_origTid, 0, sizeof(g_origTid));
-        int ret = ReadExHeaderTID(g_filePath, g_origTid);
-        if (ret == -1) Log("Error: Cannot open file");
-        else if (ret == -2) Log("Error: Invalid ExHeader");
-        else {
-            char tmp[64];
-            snprintf(tmp, sizeof(tmp), "Original ID: %s", g_origTid);
-            Log(tmp);
-        }
+        ReadTitleID(g_filePath, g_origTid);
+        char tmp[64];
+        snprintf(tmp, sizeof(tmp), "TitleID: %s", g_origTid);
+        Log(tmp);
     }
 }
 
-void DoModify(HWND hEditTID) {
+void DoModify(HWND hEdit) {
     if (!*g_filePath) {
-        MessageBoxA(NULL, "Please select a file first", "Warning", MB_ICONWARNING);
+        MessageBoxA(NULL, "Select a file first", "Warning", MB_ICONWARNING);
         return;
     }
-    char newTID[32];
-    GetWindowTextA(hEditTID, newTID, 32);
-    if (!ValidateTitleID(newTID)) {
-        MessageBoxA(NULL, "Must be 16 hex characters", "Error", MB_ICONERROR);
-        Log("Error: Invalid ID format");
+    char newID[32];
+    GetWindowTextA(hEdit, newID, 32);
+    if (!ValidateTitleID(newID)) {
+        MessageBoxA(NULL, "16 hex characters required", "Error", MB_ICONERROR);
+        Log("Invalid format");
         return;
     }
-    Log("Starting modification...");
-    BackupFile(g_filePath);
-    
-    if (!WriteExHeaderTID(g_filePath, newTID)) {
-        Log("Error: Write failed");
-        MessageBoxA(NULL, "Write failed", "Error", MB_ICONERROR);
-        return;
+
+    if (CreateNewFileWithNewTitleID(g_filePath, newID)) {
+        Log("TitleID updated successfully!");
+        MessageBoxA(NULL, "Success! New file created", "OK", MB_OK);
+    } else {
+        MessageBoxA(NULL, "Failed", "Error", MB_ICONERROR);
     }
-    char finalID[17];
-    ReadExHeaderTID(g_filePath, finalID);
-    char msg[128];
-    snprintf(msg, sizeof(msg), "Success! New ID: %s", finalID);
-    Log(msg);
-    MessageBoxA(NULL, "Modify success! Backup created", "Success", MB_OK);
 }
 
-void CopyOrigToEdit(HWND hEditTid) {
-    if (strlen(g_origTid)!=16) {
-        MessageBoxA(NULL, "Please load a file first", "Info", MB_ICONINFORMATION);
-        return;
+void CopyOrig(HWND hEdit) {
+    if (strlen(g_origTid) == 16) {
+        SetWindowTextA(hEdit, g_origTid);
+        Log("Original ID copied");
     }
-    SetWindowTextA(hEditTid, g_origTid);
-    Log("Original ID copied");
-}
-
-void ClearEdit(HWND hEditTid) {
-    SetWindowTextA(hEditTid, "");
-    Log("Input cleared");
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch(msg) {
         case WM_CREATE:
-            CreateWindowA("STATIC", "File Path:", WS_CHILD|WS_VISIBLE,20,20,80,20,hWnd,NULL,NULL,NULL);
-            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,100,18,350,24,hWnd,(HMENU)IDC_EDIT_PATH,NULL,NULL);
-            CreateWindowA("BUTTON", "Browse", WS_CHILD|WS_VISIBLE,460,18,80,26,hWnd,(HMENU)IDC_BTN_BROWSE,NULL,NULL);
-            
-            CreateWindowA("STATIC", "Title ID:", WS_CHILD|WS_VISIBLE,20,70,80,20,hWnd,NULL,NULL,NULL);
-            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,100,68,200,24,hWnd,(HMENU)IDC_EDIT_TID,NULL,NULL);
-            
-            CreateWindowA("BUTTON", "Copy ID", WS_CHILD|WS_VISIBLE,310,65,100,30,hWnd,(HMENU)IDC_BTN_COPY_ORIG,NULL,NULL);
-            CreateWindowA("BUTTON", "Clear", WS_CHILD|WS_VISIBLE,420,65,60,30,hWnd,(HMENU)IDC_BTN_CLEAR,NULL,NULL);
-            
-            CreateWindowA("BUTTON", "MODIFY", WS_CHILD|WS_VISIBLE,180,120,200,40,hWnd,(HMENU)IDC_BTN_MODIFY,NULL,NULL);
+            CreateWindowA("STATIC", "File:", WS_CHILD|WS_VISIBLE,20,20,50,20,hWnd,NULL,NULL,NULL);
+            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,80,18,380,24,hWnd,(HMENU)IDC_EDIT_PATH,NULL,NULL);
+            CreateWindowA("BUTTON", "Browse", WS_CHILD|WS_VISIBLE,470,18,90,26,hWnd,(HMENU)IDC_BTN_BROWSE,NULL,NULL);
+
+            CreateWindowA("STATIC", "TitleID:", WS_CHILD|WS_VISIBLE,20,70,60,20,hWnd,NULL,NULL,NULL);
+            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,80,68,220,24,hWnd,(HMENU)IDC_EDIT_TID,NULL,NULL);
+            CreateWindowA("BUTTON", "Copy Orig", WS_CHILD|WS_VISIBLE,310,65,90,30,hWnd,(HMENU)IDC_BTN_COPY_ORIG,NULL,NULL);
+            CreateWindowA("BUTTON", "Clear", WS_CHILD|WS_VISIBLE,410,65,70,30,hWnd,(HMENU)IDC_BTN_CLEAR,NULL,NULL);
+
+            CreateWindowA("BUTTON", "CREATE NEW FILE", WS_CHILD|WS_VISIBLE,160,120,240,40,hWnd,(HMENU)IDC_BTN_MODIFY,NULL,NULL);
             return 0;
         case WM_COMMAND: {
-            HWND path = GetDlgItem(hWnd, IDC_EDIT_PATH);
-            HWND tid = GetDlgItem(hWnd, IDC_EDIT_TID);
+            HWND ePath = GetDlgItem(hWnd, IDC_EDIT_PATH);
+            HWND eTID  = GetDlgItem(hWnd, IDC_EDIT_TID);
             switch(LOWORD(wParam)) {
-                case IDC_BTN_BROWSE: BrowseFile(path); break;
-                case IDC_BTN_MODIFY: DoModify(tid); break;
-                case IDC_BTN_COPY_ORIG: CopyOrigToEdit(tid); break;
-                case IDC_BTN_CLEAR: ClearEdit(tid); break;
+                case IDC_BTN_BROWSE: BrowseFile(ePath); break;
+                case IDC_BTN_MODIFY: DoModify(eTID); break;
+                case IDC_BTN_COPY_ORIG: CopyOrig(eTID); break;
+                case IDC_BTN_CLEAR: SetWindowTextA(eTID, ""); Log("Cleared"); break;
             }
             return 0;
         }
@@ -194,21 +183,19 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     AllocConsole();
     g_logConsole = freopen("CONOUT$", "w", stdout);
-
-    Log("===== 3DS ExHeader Editor =====");
-    Log("GitHub Auto Build");
-    Log("Stable Version\n");
+    Log("===== 3DS TitleID Editor =====");
+    Log("Create new file, NO OVERWRITE!");
 
     WNDCLASSA wc = {0};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInst;
-    wc.lpszClassName = "ExhTool";
+    wc.lpszClassName = "TIDTool";
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     RegisterClassA(&wc);
 
-    HWND hWnd = CreateWindowExA(0, wc.lpszClassName, "3DS ExHeader Editor",
+    HWND hWnd = CreateWindowExA(0, wc.lpszClassName, "3DS TitleID Editor",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        CW_USEDEFAULT, CW_USEDEFAULT, 600, 240,
+        CW_USEDEFAULT, CW_USEDEFAULT, 600, 220,
         NULL, NULL, hInst, NULL);
 
     ShowWindow(hWnd, nShow);
@@ -219,7 +206,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
         TranslateMessage(&m);
         DispatchMessage(&m);
     }
-
     fclose(g_logConsole);
     FreeConsole();
     return 0;
