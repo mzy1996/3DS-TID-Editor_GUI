@@ -15,10 +15,11 @@ char g_filePath[512] = {0};
 char g_origTid[17] = {0};
 FILE* g_logConsole = NULL;
 
+// 修复：改名避免与系统宏冲突
 typedef enum {
-    FILE_TYPE_UNKNOWN = 0,
-    FILE_TYPE_3DS,     // NCSD (0x800 offset)
-    FILE_TYPE_NCCH
+    FTYPE_UNKNOWN = 0,
+    FTYPE_3DS,
+    FTYPE_NCCH
 } FileType;
 
 void Log(const char* msg) {
@@ -49,19 +50,17 @@ void LEToHex(const unsigned char* buf, char* out) {
 FileType DetectFileType(FILE* fp) {
     char magic[4];
 
-    // Check for NCCH (at 0x0)
     fseek(fp, 0, SEEK_SET);
     if (fread(magic, 1, 4, fp) == 4 && memcmp(magic, "NCCH", 4) == 0) {
-        return FILE_TYPE_NCCH;
+        return FTYPE_NCCH;
     }
 
-    // Check for 3DS NCSD (at 0x800)
     fseek(fp, 0x800, SEEK_SET);
     if (fread(magic, 1, 4, fp) == 4 && memcmp(magic, "NCSD", 4) == 0) {
-        return FILE_TYPE_3DS;
+        return FTYPE_3DS;
     }
 
-    return FILE_TYPE_UNKNOWN;
+    return FTYPE_UNKNOWN;
 }
 
 int ReadTitleID(const char* path, char* outTID) {
@@ -72,14 +71,14 @@ int ReadTitleID(const char* path, char* outTID) {
     unsigned char buf[8];
     long offset;
 
-    if (type == FILE_TYPE_3DS) {
+    if (type == FTYPE_3DS) {
         Log("Detected: 3DS ROM (NCSD)");
         offset = 0x800 + 0x118;
-    } else if (type == FILE_TYPE_NCCH) {
+    } else if (type == FTYPE_NCCH) {
         Log("Detected: NCCH");
         offset = 0x118;
     } else {
-        Log("Error: Unknown file");
+        Log("Error: Unknown file type");
         fclose(fp);
         return -2;
     }
@@ -119,7 +118,7 @@ int CreateNewFileWithNewTID(const char* srcPath, const char* newTID) {
 
     FileType type = DetectFileType(fp);
     long offset;
-    if (type == FILE_TYPE_3DS) offset = 0x800 + 0x118;
+    if (type == FTYPE_3DS) offset = 0x800 + 0x118;
     else offset = 0x118;
 
     unsigned char tidBytes[8];
