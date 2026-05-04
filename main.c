@@ -17,11 +17,6 @@ char g_origTid[17] = {0};
 char g_origGameName[128] = {0};
 FILE* g_logConsole = NULL;
 
-typedef enum {
-    FTYPE_UNKNOWN = 0,
-    FTYPE_VALID
-} FileType;
-
 void Log(const char* msg) {
     if (g_logConsole) {
         fprintf(g_logConsole, "%s\n", msg);
@@ -165,7 +160,7 @@ int CreateNewFile(const char* src, const char* newtid, const char* newname) {
     }
 
     fclose(fp);
-    Log("New file:");
+    Log("New file created:");
     Log(dst);
     return 1;
 }
@@ -191,8 +186,11 @@ void Browse(HWND hPath, HWND hTID, HWND hName) {
         SetWindowTextA(hName, g_origGameName);
 
         Log("----------------");
-        Log("TitleID: %s", g_origTid);
-        Log("Name: %s", g_origGameName);
+        char tmp[256];
+        snprintf(tmp, sizeof(tmp), "TitleID: %s", g_origTid);
+        Log(tmp);
+        snprintf(tmp, sizeof(tmp), "Name: %s", g_origGameName);
+        Log(tmp);
     }
 }
 
