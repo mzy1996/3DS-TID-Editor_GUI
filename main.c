@@ -4,7 +4,6 @@
 #include <string.h>
 #include <ctype.h>
 
-// 控件ID
 #define IDC_BTN_BROWSE     101
 #define IDC_EDIT_PATH      102
 #define IDC_EDIT_TID       103
@@ -18,11 +17,11 @@ char g_origTid[17] = {0};
 char g_origGameName[64] = {0};
 FILE* g_logConsole = NULL;
 
-// 重命名枚举避免系统宏冲突
 typedef enum {
     FTYPE_UNKNOWN = 0,
-    FTYPE_3DS,
-    FTYPE_NCCH
+    FTYPE_3DS_800,   // 3DS (NCSD at 0x800)
+    FTYPE_3DS_000,   // 3DS (NCSD at 0x000)
+    FTYPE_NCCH       // NCCH
 } FileType;
 
 void Log(const char* msg) {
@@ -50,60 +49,79 @@ void LEToHex(const unsigned char* buf, char* out) {
         sprintf(out + i*2, "%02X", buf[7-i]);
 }
 
+// 万能识别所有 3DS/NCCH 格式
 FileType DetectFileType(FILE* fp) {
     char magic[4];
+
+    // 1. 检查 NCCH (0x0)
     fseek(fp, 0, SEEK_SET);
-    if (fread(magic, 1, 4, fp) == 4 && memcmp(magic, "NCCH", 4) == 0) {
+    if (fread(magic, 1, 4, fp) == 4 && memcmp(magic, "NCCH", 4) == 0)
         return FTYPE_NCCH;
-    }
+
+    // 2. 检查 3DS (NCSD at 0x0)
+    fseek(fp, 0, SEEK_SET);
+    if (fread(magic, 1, 4, fp) == 4 && memcmp(magic, "NCSD", 4) == 0)
+        return FTYPE_3DS_000;
+
+    // 3. 检查 3DS (NCSD at 0x800)
     fseek(fp, 0x800, SEEK_SET);
-    if (fread(magic, 1, 4, fp) == 4 && memcmp(magic, "NCSD", 4) == 0) {
-        return FTYPE_3DS;
-    }
+    if (fread(magic, 1, 4, fp) == 4 && memcmp(magic, "NCSD", 4) == 0)
+        return FTYPE_3DS_800;
+
     return FTYPE_UNKNOWN;
 }
 
-// 获取TitleID偏移
+// 获取正确偏移
 long GetTidOffset(FileType type) {
-    if (type == FTYPE_3DS) return 0x800 + 0x118;
-    return 0x118;
+    if (type == FTYPE_3DS_800) return 0x800 + 0x118;
+    if (type == FTYPE_3DS_000) return 0x118;
+    if (type == FTYPE_NCCH)    return 0x118;
+    return 0;
 }
 
-// 获取游戏标题偏移
-long GetGameNameOffset(FileType type) {
-    if (type == FTYPE_3DS) return 0x800 + 0x200;
-    return 0x200;
+long GetNameOffset(FileType type) {
+    if (type == FTYPE_3DS_800) return 0x800 + 0x200;
+    if (type == FTYPE_3DS_000) return 0x200;
+    if (type == FTYPE_NCCH)    return 0x200;
+    return 0;
 }
 
 int ReadTitleID(const char* path, char* outTID) {
     FILE* fp = fopen(path, "rb");
     if (!fp) return -1;
-    FileType type = DetectFileType(fp);
-    if (type == FTYPE_UNKNOWN) { Log("Error: Unknown file"); fclose(fp); return -2; }
 
+    FileType type = DetectFileType(fp);
+    if (type == FTYPE_UNKNOWN) {
+        Log("Error: Unknown file type");
+        fclose(fp);
+        return -2;
+    }
+
+    Log("File detected successfully");
+    long offset = GetTidOffset(type);
     unsigned char buf[8];
-    fseek(fp, GetTidOffset(type), SEEK_SET);
+    fseek(fp, offset, SEEK_SET);
     fread(buf, 1, 8, fp);
     LEToHex(buf, outTID);
     fclose(fp);
     return 0;
 }
 
-// 读取游戏标题
 int ReadGameName(const char* path, char* outName, int maxLen) {
     FILE* fp = fopen(path, "rb");
     if (!fp) return -1;
+
     FileType type = DetectFileType(fp);
     if (type == FTYPE_UNKNOWN) { fclose(fp); return -2; }
 
     memset(outName, 0, maxLen);
-    fseek(fp, GetGameNameOffset(type), SEEK_SET);
+    long offset = GetNameOffset(type);
+    fseek(fp, offset, SEEK_SET);
     fread(outName, 1, maxLen - 1, fp);
     fclose(fp);
     return 0;
 }
 
-// 生成新文件：同时改 TitleID + 游戏标题
 int CreateNewFileWithMods(const char* srcPath, const char* newTID, const char* newName) {
     char newPath[512];
     snprintf(newPath, sizeof(newPath), "%s_modified", srcPath);
@@ -116,35 +134,33 @@ int CreateNewFileWithMods(const char* srcPath, const char* newTID, const char* n
         return 0;
     }
 
-    // 完整复制原文件
     char buf[4096];
     size_t n;
-    while ((n = fread(buf, 1, 4096, in)) > 0) {
+    while ((n = fread(buf, 1, 4096, in)) > 0)
         fwrite(buf, 1, n, out);
-    }
+
     fclose(in);
     fclose(out);
 
-    // 修改新文件内容
     FILE* fp = fopen(newPath, "r+b");
     if (!fp) return 0;
 
     FileType type = DetectFileType(fp);
+    long tidOff = GetTidOffset(type);
+    long nameOff = GetNameOffset(type);
+
     unsigned char tidBytes[8];
     HexToLE(newTID, tidBytes);
-
-    // 写入TitleID
-    fseek(fp, GetTidOffset(type), SEEK_SET);
+    fseek(fp, tidOff, SEEK_SET);
     fwrite(tidBytes, 1, 8, fp);
 
-    // 写入游戏标题（最多0x40字节）
     char nameBuf[0x40] = {0};
     strncpy(nameBuf, newName, sizeof(nameBuf)-1);
-    fseek(fp, GetGameNameOffset(type), SEEK_SET);
+    fseek(fp, nameOff, SEEK_SET);
     fwrite(nameBuf, 1, sizeof(nameBuf), fp);
 
     fclose(fp);
-    Log("New file generated successfully");
+    Log("New file created:");
     Log(newPath);
     return 1;
 }
@@ -163,9 +179,6 @@ void BrowseFile(HWND hEditPath, HWND hEditTid, HWND hEditName) {
         strcpy(g_filePath, szFile);
         SetWindowTextA(hEditPath, szFile);
 
-        memset(g_origTid, 0, sizeof(g_origTid));
-        memset(g_origGameName, 0, sizeof(g_origGameName));
-
         ReadTitleID(g_filePath, g_origTid);
         ReadGameName(g_filePath, g_origGameName, sizeof(g_origGameName));
 
@@ -173,9 +186,9 @@ void BrowseFile(HWND hEditPath, HWND hEditTid, HWND hEditName) {
         SetWindowTextA(hEditName, g_origGameName);
 
         char tmp[128];
-        snprintf(tmp, sizeof(tmp), "Original TitleID: %s", g_origTid);
+        snprintf(tmp, sizeof(tmp), "TitleID: %s", g_origTid);
         Log(tmp);
-        snprintf(tmp, sizeof(tmp), "Original GameName: %s", g_origGameName);
+        snprintf(tmp, sizeof(tmp), "GameName: %s", g_origGameName);
         Log(tmp);
     }
 }
@@ -191,65 +204,50 @@ void DoModify(HWND hEditTid, HWND hEditName) {
 
     if (!ValidateTitleID(newID)) {
         MessageBoxA(NULL, "TitleID must be 16 hex chars", "Error", MB_ICONERROR);
-        Log("Invalid TitleID format");
         return;
     }
 
     if (CreateNewFileWithMods(g_filePath, newID, newName)) {
-        MessageBoxA(NULL, "Success! New file created", "OK", MB_OK);
+        MessageBoxA(NULL, "Success!", "OK", MB_OK);
     } else {
-        MessageBoxA(NULL, "Failed to create new file", "Error", MB_ICONERROR);
+        MessageBoxA(NULL, "Failed", "Error", MB_ICONERROR);
     }
-}
-
-void CopyOrigAll(HWND hEditTid, HWND hEditName) {
-    SetWindowTextA(hEditTid, g_origTid);
-    SetWindowTextA(hEditName, g_origGameName);
-    Log("Original ID and Name copied");
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch(msg) {
         case WM_CREATE:
-            // 第一行 文件路径
-            CreateWindowA("STATIC", "File Path:", WS_CHILD|WS_VISIBLE,20,20,70,20,hWnd,NULL,NULL,NULL);
-            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,95,18,330,24,hWnd,(HMENU)IDC_EDIT_PATH,NULL,NULL);
-            CreateWindowA("BUTTON", "Browse", WS_CHILD|WS_VISIBLE,435,18,80,26,hWnd,(HMENU)IDC_BTN_BROWSE,NULL,NULL);
+            CreateWindowA("STATIC", "File:", WS_CHILD|WS_VISIBLE,20,20,50,20,hWnd,NULL,NULL,NULL);
+            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,80,18,330,24,hWnd,(HMENU)IDC_EDIT_PATH,NULL,NULL);
+            CreateWindowA("BUTTON", "Browse", WS_CHILD|WS_VISIBLE,425,18,80,26,hWnd,(HMENU)IDC_BTN_BROWSE,NULL,NULL);
 
-            // 第二行 TitleID
-            CreateWindowA("STATIC", "Title ID:", WS_CHILD|WS_VISIBLE,20,70,70,20,hWnd,NULL,NULL,NULL);
-            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,95,68,200,24,hWnd,(HMENU)IDC_EDIT_TID,NULL,NULL);
+            CreateWindowA("STATIC", "TitleID:", WS_CHILD|WS_VISIBLE,20,70,60,20,hWnd,NULL,NULL,NULL);
+            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,80,68,200,24,hWnd,(HMENU)IDC_EDIT_TID,NULL,NULL);
 
-            // 第三行 Game Name 新增
-            CreateWindowA("STATIC", "Game Name:", WS_CHILD|WS_VISIBLE,20,120,70,20,hWnd,NULL,NULL,NULL);
-            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,95,118,320,24,hWnd,(HMENU)IDC_EDIT_GAMENAME,NULL,NULL);
+            CreateWindowA("STATIC", "Game Name:", WS_CHILD|WS_VISIBLE,20,120,60,20,hWnd,NULL,NULL,NULL);
+            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,80,118,320,24,hWnd,(HMENU)IDC_EDIT_GAMENAME,NULL,NULL);
 
-            // 按钮
-            CreateWindowA("BUTTON", "Copy Orig", WS_CHILD|WS_VISIBLE,300,65,90,28,hWnd,(HMENU)IDC_BTN_COPY_ORIG,NULL,NULL);
-            CreateWindowA("BUTTON", "Clear", WS_CHILD|WS_VISIBLE,400,65,70,28,hWnd,(HMENU)IDC_BTN_CLEAR,NULL,NULL);
+            CreateWindowA("BUTTON", "Copy Orig", WS_CHILD|WS_VISIBLE,290,65,90,28,hWnd,(HMENU)IDC_BTN_COPY_ORIG,NULL,NULL);
+            CreateWindowA("BUTTON", "Clear", WS_CHILD|WS_VISIBLE,390,65,70,28,hWnd,(HMENU)IDC_BTN_CLEAR,NULL,NULL);
 
-            CreateWindowA("BUTTON", "Generate Modified File", WS_CHILD|WS_VISIBLE,120,160,300,40,hWnd,(HMENU)IDC_BTN_MODIFY,NULL,NULL);
+            CreateWindowA("BUTTON", "CREATE NEW FILE", WS_CHILD|WS_VISIBLE,130,160,300,40,hWnd,(HMENU)IDC_BTN_MODIFY,NULL,NULL);
             return 0;
 
         case WM_COMMAND: {
-            HWND ePath  = GetDlgItem(hWnd, IDC_EDIT_PATH);
-            HWND eTid   = GetDlgItem(hWnd, IDC_EDIT_TID);
-            HWND eName  = GetDlgItem(hWnd, IDC_EDIT_GAMENAME);
+            HWND ePath = GetDlgItem(hWnd, IDC_EDIT_PATH);
+            HWND eTid  = GetDlgItem(hWnd, IDC_EDIT_TID);
+            HWND eName = GetDlgItem(hWnd, IDC_EDIT_GAMENAME);
 
             switch(LOWORD(wParam)) {
-                case IDC_BTN_BROWSE:
-                    BrowseFile(ePath, eTid, eName);
-                    break;
-                case IDC_BTN_MODIFY:
-                    DoModify(eTid, eName);
-                    break;
+                case IDC_BTN_BROWSE: BrowseFile(ePath, eTid, eName); break;
+                case IDC_BTN_MODIFY: DoModify(eTid, eName); break;
                 case IDC_BTN_COPY_ORIG:
-                    CopyOrigAll(eTid, eName);
+                    SetWindowTextA(eTid, g_origTid);
+                    SetWindowTextA(eName, g_origGameName);
                     break;
                 case IDC_BTN_CLEAR:
                     SetWindowTextA(eTid, "");
                     SetWindowTextA(eName, "");
-                    Log("Input cleared");
                     break;
             }
             return 0;
@@ -265,19 +263,17 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     AllocConsole();
     g_logConsole = freopen("CONOUT$", "w", stdout);
-    Log("===== 3DS TitleID & Game Name Editor =====");
-    Log("Supports .3ds / .ncch | Save as new file");
+    Log("===== 3DS Tool - All Format Supported =====");
 
     WNDCLASSA wc = {0};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInst;
-    wc.lpszClassName = "TIDTool";
-    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.lpszClassName = "3DSTool";
     RegisterClassA(&wc);
 
-    HWND hWnd = CreateWindowExA(0, wc.lpszClassName, "3DS Title & Name Editor",
+    HWND hWnd = CreateWindowExA(0, wc.lpszClassName, "3DS Editor",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        CW_USEDEFAULT, CW_USEDEFAULT, 550, 240,
+        CW_USEDEFAULT, CW_USEDEFAULT, 540, 240,
         NULL, NULL, hInst, NULL);
 
     ShowWindow(hWnd, nShow);
