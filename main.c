@@ -4,11 +4,6 @@
 #include <string.h>
 #include <ctype.h>
 
-#define TITLEID_BYTES 8
-#define NCCH_TITLEID_OFFSET 0x118
-#define NCSD_HEADER_SIZE 0x200
-#define NCSD_TITLEID_OFFSET (NCSD_HEADER_SIZE + NCCH_TITLEID_OFFSET)
-
 #define IDC_BTN_BROWSE    101
 #define IDC_EDIT_PATH     102
 #define IDC_EDIT_TID      103
@@ -20,83 +15,91 @@ char g_filePath[512] = {0};
 char g_origTid[17] = {0};
 FILE* g_logConsole = NULL;
 
-typedef struct {
-    unsigned char titleID[8];
-} TitleIDEntry;
+typedef enum {
+    FILE_TYPE_UNKNOWN = 0,
+    FILE_TYPE_3DS,     // NCSD (0x800 offset)
+    FILE_TYPE_NCCH
+} FileType;
 
 void Log(const char* msg) {
-    if (g_logConsole) {
-        fprintf(g_logConsole, "%s\n", msg);
-        fflush(g_logConsole);
-    }
+    if (g_logConsole) { fprintf(g_logConsole, "%s\n", msg); fflush(g_logConsole); }
 }
 
 int ValidateTitleID(const char* tid) {
     if (strlen(tid) != 16) return 0;
-    for (int i = 0; i < 16; i++) if (!isxdigit(tid[i])) return 0;
+    for (int i=0;i<16;i++) if (!isxdigit(tid[i])) return 0;
     return 1;
 }
 
 void HexToLE(const char* hexStr, unsigned char* out) {
     memset(out, 0, 8);
-    for (int i = 0; i < 8; i++) {
-        unsigned int byte;
-        sscanf(hexStr + (i * 2), "%02x", &byte);
-        out[7 - i] = (unsigned char)byte;
+    for (int i=0;i<8;i++) {
+        unsigned int b;
+        sscanf(hexStr + i*2, "%02x", &b);
+        out[7-i] = b;
     }
 }
 
 void LEToHex(const unsigned char* buf, char* out) {
     memset(out, 0, 17);
-    for (int i = 0; i < 8; i++)
-        sprintf(out + (i * 2), "%02X", buf[7 - i]);
+    for (int i=0;i<8;i++)
+        sprintf(out + i*2, "%02X", buf[7-i]);
 }
 
-int IsNcsdFile(FILE* fp) {
-    fseek(fp, 0, SEEK_SET);
+FileType DetectFileType(FILE* fp) {
     char magic[4];
-    if (fread(magic, 1, 4, fp) != 4) return 0;
-    return (memcmp(magic, "NCSD", 4) == 0);
+
+    // Check for NCCH (at 0x0)
+    fseek(fp, 0, SEEK_SET);
+    if (fread(magic, 1, 4, fp) == 4 && memcmp(magic, "NCCH", 4) == 0) {
+        return FILE_TYPE_NCCH;
+    }
+
+    // Check for 3DS NCSD (at 0x800)
+    fseek(fp, 0x800, SEEK_SET);
+    if (fread(magic, 1, 4, fp) == 4 && memcmp(magic, "NCSD", 4) == 0) {
+        return FILE_TYPE_3DS;
+    }
+
+    return FILE_TYPE_UNKNOWN;
 }
 
-int ReadTitleIDFrom3DS(FILE* fp, char* out) {
-    unsigned char buf[8];
-    fseek(fp, NCSD_TITLEID_OFFSET, SEEK_SET);
-    if (fread(buf, 1, 8, fp) != 8) return -1;
-    LEToHex(buf, out);
-    return 0;
-}
-
-int ReadTitleIDFromNCCH(FILE* fp, char* out) {
-    unsigned char buf[8];
-    fseek(fp, NCCH_TITLEID_OFFSET, SEEK_SET);
-    if (fread(buf, 1, 8, fp) != 8) return -1;
-    LEToHex(buf, out);
-    return 0;
-}
-
-int ReadTitleID(const char* path, char* out) {
+int ReadTitleID(const char* path, char* outTID) {
     FILE* fp = fopen(path, "rb");
     if (!fp) return -1;
 
-    if (IsNcsdFile(fp)) {
-        Log("Detected: 3DS (NCSD)");
-        ReadTitleIDFrom3DS(fp, out);
-    } else {
+    FileType type = DetectFileType(fp);
+    unsigned char buf[8];
+    long offset;
+
+    if (type == FILE_TYPE_3DS) {
+        Log("Detected: 3DS ROM (NCSD)");
+        offset = 0x800 + 0x118;
+    } else if (type == FILE_TYPE_NCCH) {
         Log("Detected: NCCH");
-        ReadTitleIDFromNCCH(fp, out);
+        offset = 0x118;
+    } else {
+        Log("Error: Unknown file");
+        fclose(fp);
+        return -2;
     }
 
+    fseek(fp, offset, SEEK_SET);
+    if (fread(buf, 1, 8, fp) != 8) {
+        fclose(fp);
+        return -3;
+    }
+    LEToHex(buf, outTID);
     fclose(fp);
     return 0;
 }
 
-int CreateModifiedFile(const char* src, const char* newID) {
-    char dstPath[512];
-    snprintf(dstPath, sizeof(dstPath), "%s_modified.bin", src);
+int CreateNewFileWithNewTID(const char* srcPath, const char* newTID) {
+    char newPath[512];
+    snprintf(newPath, sizeof(newPath), "%s_modified", srcPath);
 
-    FILE* in = fopen(src, "rb");
-    FILE* out = fopen(dstPath, "wb");
+    FILE* in = fopen(srcPath, "rb");
+    FILE* out = fopen(newPath, "wb");
     if (!in || !out) {
         if (in) fclose(in);
         if (out) fclose(out);
@@ -105,28 +108,28 @@ int CreateModifiedFile(const char* src, const char* newID) {
 
     char buf[4096];
     size_t n;
-    while ((n = fread(buf, 1, 4096, in)) > 0)
+    while ((n = fread(buf, 1, 4096, in)) > 0) {
         fwrite(buf, 1, n, out);
-
+    }
     fclose(in);
     fclose(out);
 
-    FILE* fp = fopen(dstPath, "r+b");
+    FILE* fp = fopen(newPath, "r+b");
     if (!fp) return 0;
 
+    FileType type = DetectFileType(fp);
+    long offset;
+    if (type == FILE_TYPE_3DS) offset = 0x800 + 0x118;
+    else offset = 0x118;
+
     unsigned char tidBytes[8];
-    HexToLE(newID, tidBytes);
-
-    if (IsNcsdFile(fp))
-        fseek(fp, NCSD_TITLEID_OFFSET, SEEK_SET);
-    else
-        fseek(fp, NCCH_TITLEID_OFFSET, SEEK_SET);
-
+    HexToLE(newTID, tidBytes);
+    fseek(fp, offset, SEEK_SET);
     fwrite(tidBytes, 1, 8, fp);
     fclose(fp);
 
-    Log("Created:");
-    Log(dstPath);
+    Log("Created new file:");
+    Log(newPath);
     return 1;
 }
 
@@ -143,6 +146,7 @@ void BrowseFile(HWND hEditPath) {
     if (GetOpenFileNameA(&ofn)) {
         strcpy(g_filePath, szFile);
         SetWindowTextA(hEditPath, szFile);
+        memset(g_origTid, 0, sizeof(g_origTid));
         ReadTitleID(g_filePath, g_origTid);
 
         char tmp[64];
@@ -153,51 +157,45 @@ void BrowseFile(HWND hEditPath) {
 
 void DoModify(HWND hEdit) {
     if (!*g_filePath) {
-        MessageBoxA(NULL, "Select a file first", "Warning", MB_ICONWARNING);
+        MessageBoxA(NULL, "Select file first", "Warning", MB_ICONWARNING);
         return;
     }
     char newID[32];
     GetWindowTextA(hEdit, newID, 32);
     if (!ValidateTitleID(newID)) {
-        MessageBoxA(NULL, "Must be 16 hex chars", "Error", MB_ICONERROR);
+        MessageBoxA(NULL, "16 hex required", "Error", MB_ICONERROR);
         return;
     }
-    if (CreateModifiedFile(g_filePath, newID)) {
-        MessageBoxA(NULL, "Success! New file created", "OK", MB_OK);
+    if (CreateNewFileWithNewTID(g_filePath, newID)) {
+        MessageBoxA(NULL, "Success!", "OK", MB_OK);
         Log("Done!");
     } else {
-        MessageBoxA(NULL, "Failed", "Error", MB_ICONERROR);
+        MessageBoxA(NULL, "Fail", "Error", MB_ICONERROR);
     }
-}
-
-void CopyOrig(HWND hEdit) {
-    SetWindowTextA(hEdit, g_origTid);
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    switch (msg) {
+    switch(msg) {
         case WM_CREATE:
-            CreateWindowA("STATIC", "File:", WS_CHILD | WS_VISIBLE, 20, 20, 50, 20, hWnd, NULL, NULL, NULL);
-            CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, 80, 18, 380, 24, hWnd, (HMENU)IDC_EDIT_PATH, NULL, NULL);
-            CreateWindowA("BUTTON", "Browse", WS_CHILD | WS_VISIBLE, 470, 18, 90, 26, hWnd, (HMENU)IDC_BTN_BROWSE, NULL, NULL);
+            CreateWindowA("STATIC", "File:", WS_CHILD|WS_VISIBLE,20,20,50,20,hWnd,NULL,NULL,NULL);
+            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,80,18,380,24,hWnd,(HMENU)IDC_EDIT_PATH,NULL,NULL);
+            CreateWindowA("BUTTON", "Browse", WS_CHILD|WS_VISIBLE,470,18,90,26,hWnd,(HMENU)IDC_BTN_BROWSE,NULL,NULL);
 
-            CreateWindowA("STATIC", "TitleID:", WS_CHILD | WS_VISIBLE, 20, 70, 60, 20, hWnd, NULL, NULL, NULL);
-            CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, 80, 68, 220, 24, hWnd, (HMENU)IDC_EDIT_TID, NULL, NULL);
-            CreateWindowA("BUTTON", "Copy Orig", WS_CHILD | WS_VISIBLE, 310, 65, 90, 30, hWnd, (HMENU)IDC_BTN_COPY_ORIG, NULL, NULL);
-            CreateWindowA("BUTTON", "Clear", WS_CHILD | WS_VISIBLE, 410, 65, 70, 30, hWnd, (HMENU)IDC_BTN_CLEAR, NULL, NULL);
+            CreateWindowA("STATIC", "TitleID:", WS_CHILD|WS_VISIBLE,20,70,60,20,hWnd,NULL,NULL,NULL);
+            CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,80,68,220,24,hWnd,(HMENU)IDC_EDIT_TID,NULL,NULL);
+            CreateWindowA("BUTTON", "Copy Orig", WS_CHILD|WS_VISIBLE,310,65,90,30,hWnd,(HMENU)IDC_BTN_COPY_ORIG,NULL,NULL);
+            CreateWindowA("BUTTON", "Clear", WS_CHILD|WS_VISIBLE,410,65,70,30,hWnd,(HMENU)IDC_BTN_CLEAR,NULL,NULL);
 
-            CreateWindowA("BUTTON", "CREATE NEW FILE", WS_CHILD | WS_VISIBLE, 160, 120, 240, 40, hWnd, (HMENU)IDC_BTN_MODIFY, NULL, NULL);
+            CreateWindowA("BUTTON", "CREATE NEW FILE", WS_CHILD|WS_VISIBLE,160,120,240,40,hWnd,(HMENU)IDC_BTN_MODIFY,NULL,NULL);
             return 0;
-
         case WM_COMMAND:
-            switch (LOWORD(wParam)) {
+            switch(LOWORD(wParam)) {
                 case IDC_BTN_BROWSE: BrowseFile(GetDlgItem(hWnd, IDC_EDIT_PATH)); break;
                 case IDC_BTN_MODIFY: DoModify(GetDlgItem(hWnd, IDC_EDIT_TID)); break;
-                case IDC_BTN_COPY_ORIG: CopyOrig(GetDlgItem(hWnd, IDC_EDIT_TID)); break;
+                case IDC_BTN_COPY_ORIG: SetWindowTextA(GetDlgItem(hWnd, IDC_EDIT_TID), g_origTid); break;
                 case IDC_BTN_CLEAR: SetWindowTextA(GetDlgItem(hWnd, IDC_EDIT_TID), ""); break;
             }
             return 0;
-
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
@@ -208,13 +206,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     AllocConsole();
     g_logConsole = freopen("CONOUT$", "w", stdout);
-    Log("===== 3DS TitleID Editor (FIXED) =====");
+    Log("===== 3DS TitleID Editor (FINAL FIX) =====");
 
     WNDCLASSA wc = {0};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInst;
     wc.lpszClassName = "TIDTool";
-    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     RegisterClassA(&wc);
 
     HWND hWnd = CreateWindowExA(0, wc.lpszClassName, "3DS TitleID Editor",
@@ -226,7 +223,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     UpdateWindow(hWnd);
 
     MSG m;
-    while (GetMessage(&m, 0, 0, 0)) {
+    while(GetMessage(&m,0,0,0)) {
         TranslateMessage(&m);
         DispatchMessage(&m);
     }
