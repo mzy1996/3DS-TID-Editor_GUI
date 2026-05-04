@@ -17,5 +17,5 @@ jobs:
       - name: 上传成品
         uses: actions/upload-artifact@v4
         with:
-          name: ExhTitleID_GUI
-          path: ExhTitleID_GUI.exe
+          name: 3DS_TitleID_Editor
+          path: 3DS_TitleID_Editor.exe
