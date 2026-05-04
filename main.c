@@ -19,13 +19,34 @@ FILE* g_logConsole = NULL;
 
 typedef enum {
     FTYPE_UNKNOWN = 0,
-    FTYPE_3DS_800,   // 3DS (NCSD at 0x800)
-    FTYPE_3DS_000,   // 3DS (NCSD at 0x000)
-    FTYPE_NCCH       // NCCH
+    FTYPE_3DS_800,
+    FTYPE_3DS_000,
+    FTYPE_NCCH
 } FileType;
 
 void Log(const char* msg) {
     if (g_logConsole) { fprintf(g_logConsole, "%s\n", msg); fflush(g_logConsole); }
+}
+
+// 打印前256字节十六进制
+void PrintHex(const char* path) {
+    FILE* fp = fopen(path, "rb");
+    if (!fp) { Log("PrintHex: fopen failed"); return; }
+    unsigned char buf[256];
+    int n = fread(buf,1,256,fp);
+    fclose(fp);
+    Log("---------------- FILE HEX (first 256 bytes) ----------------");
+    char line[128];
+    for (int i=0; i<n; i++) {
+        if (i%16==0) {
+            sprintf(line,"%08X: ",i);
+            Log(line);
+        }
+        sprintf(line,"%02X ", buf[i]);
+        Log(line);
+        if ((i+1)%16==0) Log("");
+    }
+    Log("--------------------------------------------------------------");
 }
 
 int ValidateTitleID(const char* tid) {
@@ -49,29 +70,37 @@ void LEToHex(const unsigned char* buf, char* out) {
         sprintf(out + i*2, "%02X", buf[7-i]);
 }
 
-// 万能识别所有 3DS/NCCH 格式
 FileType DetectFileType(FILE* fp) {
     char magic[4];
 
-    // 1. 检查 NCCH (0x0)
-    fseek(fp, 0, SEEK_SET);
-    if (fread(magic, 1, 4, fp) == 4 && memcmp(magic, "NCCH", 4) == 0)
-        return FTYPE_NCCH;
+    // NCCH @0x0
+    fseek(fp,0,SEEK_SET);
+    if (fread(magic,1,4,fp)==4) {
+        char tmp[32];
+        sprintf(tmp,"@0x0: %02X %02X %02X %02X", magic[0],magic[1],magic[2],magic[3]);
+        Log(tmp);
+        if (memcmp(magic,"NCCH",4)==0) { Log("→ NCCH"); return FTYPE_NCCH; }
+    }
 
-    // 2. 检查 3DS (NCSD at 0x0)
-    fseek(fp, 0, SEEK_SET);
-    if (fread(magic, 1, 4, fp) == 4 && memcmp(magic, "NCSD", 4) == 0)
-        return FTYPE_3DS_000;
+    // NCSD @0x0
+    fseek(fp,0,SEEK_SET);
+    if (fread(magic,1,4,fp)==4) {
+        if (memcmp(magic,"NCSD",4)==0) { Log("→ NCSD@0x0"); return FTYPE_3DS_000; }
+    }
 
-    // 3. 检查 3DS (NCSD at 0x800)
-    fseek(fp, 0x800, SEEK_SET);
-    if (fread(magic, 1, 4, fp) == 4 && memcmp(magic, "NCSD", 4) == 0)
-        return FTYPE_3DS_800;
+    // NCSD @0x800
+    fseek(fp,0x800,SEEK_SET);
+    if (fread(magic,1,4,fp)==4) {
+        char tmp[32];
+        sprintf(tmp,"@0x800: %02X %02X %02X %02X", magic[0],magic[1],magic[2],magic[3]);
+        Log(tmp);
+        if (memcmp(magic,"NCSD",4)==0) { Log("→ NCSD@0x800"); return FTYPE_3DS_800; }
+    }
 
+    Log("→ UNKNOWN");
     return FTYPE_UNKNOWN;
 }
 
-// 获取正确偏移
 long GetTidOffset(FileType type) {
     if (type == FTYPE_3DS_800) return 0x800 + 0x118;
     if (type == FTYPE_3DS_000) return 0x118;
@@ -90,6 +119,7 @@ int ReadTitleID(const char* path, char* outTID) {
     FILE* fp = fopen(path, "rb");
     if (!fp) return -1;
 
+    PrintHex(path); // 打印文件头
     FileType type = DetectFileType(fp);
     if (type == FTYPE_UNKNOWN) {
         Log("Error: Unknown file type");
@@ -97,7 +127,6 @@ int ReadTitleID(const char* path, char* outTID) {
         return -2;
     }
 
-    Log("File detected successfully");
     long offset = GetTidOffset(type);
     unsigned char buf[8];
     fseek(fp, offset, SEEK_SET);
@@ -263,7 +292,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     AllocConsole();
     g_logConsole = freopen("CONOUT$", "w", stdout);
-    Log("===== 3DS Tool - All Format Supported =====");
+    Log("===== 3DS Tool - DEBUG VERSION =====");
 
     WNDCLASSA wc = {0};
     wc.lpfnWndProc = WndProc;
@@ -271,7 +300,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     wc.lpszClassName = "3DSTool";
     RegisterClassA(&wc);
 
-    HWND hWnd = CreateWindowExA(0, wc.lpszClassName, "3DS Editor",
+    HWND hWnd = CreateWindowExA(0, wc.lpszClassName, "3DS Editor (Debug)",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
         CW_USEDEFAULT, CW_USEDEFAULT, 540, 240,
         NULL, NULL, hInst, NULL);
