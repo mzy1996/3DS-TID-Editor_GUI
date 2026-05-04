@@ -17,138 +17,120 @@ char g_origTid[17] = {0};
 char g_origGameName[64] = {0};
 FILE* g_logConsole = NULL;
 
-typedef enum {
-    FTYPE_UNKNOWN = 0,
-    FTYPE_3DS_800,
-    FTYPE_3DS_000,
-    FTYPE_NCCH
-} FileType;
-
 void Log(const char* msg) {
     if (g_logConsole) { fprintf(g_logConsole, "%s\n", msg); fflush(g_logConsole); }
 }
 
-// 打印前256字节十六进制
-void PrintHex(const char* path) {
-    FILE* fp = fopen(path, "rb");
-    if (!fp) { Log("PrintHex: fopen failed"); return; }
-    unsigned char buf[256];
-    int n = fread(buf,1,256,fp);
-    fclose(fp);
-    Log("---------------- FILE HEX (first 256 bytes) ----------------");
-    char line[128];
-    for (int i=0; i<n; i++) {
-        if (i%16==0) {
-            sprintf(line,"%08X: ",i);
-            Log(line);
-        }
-        sprintf(line,"%02X ", buf[i]);
-        Log(line);
-        if ((i+1)%16==0) Log("");
-    }
-    Log("--------------------------------------------------------------");
-}
-
 int ValidateTitleID(const char* tid) {
     if (strlen(tid) != 16) return 0;
-    for (int i=0;i<16;i++) if (!isxdigit(tid[i])) return 0;
+    for (int i = 0; i < 16; i++)
+        if (!isxdigit((unsigned char)tid[i])) return 0;
     return 1;
 }
 
 void HexToLE(const char* hexStr, unsigned char* out) {
     memset(out, 0, 8);
-    for (int i=0;i<8;i++) {
+    for (int i = 0; i < 8; i++) {
         unsigned int b;
-        sscanf(hexStr + i*2, "%02x", &b);
-        out[7-i] = b;
+        sscanf(hexStr + i * 2, "%02x", &b);
+        out[7 - i] = (unsigned char)b;
     }
 }
 
 void LEToHex(const unsigned char* buf, char* out) {
     memset(out, 0, 17);
-    for (int i=0;i<8;i++)
-        sprintf(out + i*2, "%02X", buf[7-i]);
+    for (int i = 0; i < 8; i++)
+        sprintf(out + i * 2, "%02X", buf[7 - i]);
 }
 
-FileType DetectFileType(FILE* fp) {
-    char magic[4];
-
-    // NCCH @0x0
-    fseek(fp,0,SEEK_SET);
-    if (fread(magic,1,4,fp)==4) {
-        char tmp[32];
-        sprintf(tmp,"@0x0: %02X %02X %02X %02X", magic[0],magic[1],magic[2],magic[3]);
-        Log(tmp);
-        if (memcmp(magic,"NCCH",4)==0) { Log("→ NCCH"); return FTYPE_NCCH; }
-    }
-
-    // NCSD @0x0
-    fseek(fp,0,SEEK_SET);
-    if (fread(magic,1,4,fp)==4) {
-        if (memcmp(magic,"NCSD",4)==0) { Log("→ NCSD@0x0"); return FTYPE_3DS_000; }
-    }
-
-    // NCSD @0x800
-    fseek(fp,0x800,SEEK_SET);
-    if (fread(magic,1,4,fp)==4) {
-        char tmp[32];
-        sprintf(tmp,"@0x800: %02X %02X %02X %02X", magic[0],magic[1],magic[2],magic[3]);
-        Log(tmp);
-        if (memcmp(magic,"NCSD",4)==0) { Log("→ NCSD@0x800"); return FTYPE_3DS_800; }
-    }
-
-    Log("→ UNKNOWN");
-    return FTYPE_UNKNOWN;
+// 判断8字节是否全0
+int IsAllZero(const unsigned char* buf) {
+    for (int i = 0; i < 8; i++)
+        if (buf[i] != 0) return 0;
+    return 1;
 }
 
-long GetTidOffset(FileType type) {
-    if (type == FTYPE_3DS_800) return 0x800 + 0x118;
-    if (type == FTYPE_3DS_000) return 0x118;
-    if (type == FTYPE_NCCH)    return 0x118;
-    return 0;
-}
-
-long GetNameOffset(FileType type) {
-    if (type == FTYPE_3DS_800) return 0x800 + 0x200;
-    if (type == FTYPE_3DS_000) return 0x200;
-    if (type == FTYPE_NCCH)    return 0x200;
-    return 0;
-}
-
-int ReadTitleID(const char* path, char* outTID) {
+// 自动尝试两个偏移读取TitleID
+int ReadTitleIDAuto(const char* path, char* outTID) {
     FILE* fp = fopen(path, "rb");
     if (!fp) return -1;
 
-    PrintHex(path); // 打印文件头
-    FileType type = DetectFileType(fp);
-    if (type == FTYPE_UNKNOWN) {
-        Log("Error: Unknown file type");
-        fclose(fp);
-        return -2;
-    }
+    unsigned char buf1[8], buf2[8];
+    // 偏移1：0x118
+    fseek(fp, 0x118, SEEK_SET);
+    fread(buf1, 1, 8, fp);
 
-    long offset = GetTidOffset(type);
-    unsigned char buf[8];
-    fseek(fp, offset, SEEK_SET);
-    fread(buf, 1, 8, fp);
-    LEToHex(buf, outTID);
+    // 偏移2：0x800 + 0x118
+    fseek(fp, 0x800 + 0x118, SEEK_SET);
+    fread(buf2, 1, 8, fp);
+
     fclose(fp);
-    return 0;
+
+    if (!IsAllZero(buf1)) {
+        LEToHex(buf1, outTID);
+        Log("Use offset: 0x118");
+        return 0;
+    }
+    if (!IsAllZero(buf2)) {
+        LEToHex(buf2, outTID);
+        Log("Use offset: 0x800 + 0x118");
+        return 0;
+    }
+    Log("Both offset are zero");
+    return -2;
 }
 
-int ReadGameName(const char* path, char* outName, int maxLen) {
+// 自动尝试两个偏移读取游戏名
+int ReadGameNameAuto(const char* path, char* outName, int maxLen) {
     FILE* fp = fopen(path, "rb");
     if (!fp) return -1;
 
-    FileType type = DetectFileType(fp);
-    if (type == FTYPE_UNKNOWN) { fclose(fp); return -2; }
+    char name1[64] = {0}, name2[64] = {0};
+    fseek(fp, 0x200, SEEK_SET);
+    fread(name1, 1, 63, fp);
+
+    fseek(fp, 0x800 + 0x200, SEEK_SET);
+    fread(name2, 1, 63, fp);
+
+    fclose(fp);
 
     memset(outName, 0, maxLen);
-    long offset = GetNameOffset(type);
-    fseek(fp, offset, SEEK_SET);
-    fread(outName, 1, maxLen - 1, fp);
+    if (name1[0] != 0) {
+        strcpy(outName, name1);
+        Log("GameName from 0x200");
+        return 0;
+    }
+    if (name2[0] != 0) {
+        strcpy(outName, name2);
+        Log("GameName from 0x800 + 0x200");
+        return 0;
+    }
+    return -2;
+}
+
+// 自动判断该写入哪个偏移
+void GetCorrectOffsets(const char* path, long* pTidOff, long* pNameOff) {
+    FILE* fp = fopen(path, "rb");
+    if (!fp) {
+        *pTidOff = 0x118;
+        *pNameOff = 0x200;
+        return;
+    }
+
+    unsigned char buf1[8], buf2[8];
+    fseek(fp, 0x118, SEEK_SET);
+    fread(buf1, 1, 8, fp);
+    fseek(fp, 0x800 + 0x118, SEEK_SET);
+    fread(buf2, 1, 8, fp);
     fclose(fp);
-    return 0;
+
+    if (!IsAllZero(buf1)) {
+        *pTidOff = 0x118;
+        *pNameOff = 0x200;
+    } else {
+        *pTidOff = 0x800 + 0x118;
+        *pNameOff = 0x800 + 0x200;
+    }
 }
 
 int CreateNewFileWithMods(const char* srcPath, const char* newTID, const char* newName) {
@@ -174,9 +156,8 @@ int CreateNewFileWithMods(const char* srcPath, const char* newTID, const char* n
     FILE* fp = fopen(newPath, "r+b");
     if (!fp) return 0;
 
-    FileType type = DetectFileType(fp);
-    long tidOff = GetTidOffset(type);
-    long nameOff = GetNameOffset(type);
+    long tidOff, nameOff;
+    GetCorrectOffsets(newPath, &tidOff, &nameOff);
 
     unsigned char tidBytes[8];
     HexToLE(newTID, tidBytes);
@@ -184,12 +165,12 @@ int CreateNewFileWithMods(const char* srcPath, const char* newTID, const char* n
     fwrite(tidBytes, 1, 8, fp);
 
     char nameBuf[0x40] = {0};
-    strncpy(nameBuf, newName, sizeof(nameBuf)-1);
+    strncpy(nameBuf, newName, sizeof(nameBuf) - 1);
     fseek(fp, nameOff, SEEK_SET);
     fwrite(nameBuf, 1, sizeof(nameBuf), fp);
 
     fclose(fp);
-    Log("New file created:");
+    Log("New file saved:");
     Log(newPath);
     return 1;
 }
@@ -208,8 +189,11 @@ void BrowseFile(HWND hEditPath, HWND hEditTid, HWND hEditName) {
         strcpy(g_filePath, szFile);
         SetWindowTextA(hEditPath, szFile);
 
-        ReadTitleID(g_filePath, g_origTid);
-        ReadGameName(g_filePath, g_origGameName, sizeof(g_origGameName));
+        memset(g_origTid, 0, sizeof(g_origTid));
+        memset(g_origGameName, 0, sizeof(g_origGameName));
+
+        ReadTitleIDAuto(g_filePath, g_origTid);
+        ReadGameNameAuto(g_filePath, g_origGameName, sizeof(g_origGameName));
 
         SetWindowTextA(hEditTid, g_origTid);
         SetWindowTextA(hEditName, g_origGameName);
@@ -233,18 +217,19 @@ void DoModify(HWND hEditTid, HWND hEditName) {
 
     if (!ValidateTitleID(newID)) {
         MessageBoxA(NULL, "TitleID must be 16 hex chars", "Error", MB_ICONERROR);
+        Log("Invalid TitleID");
         return;
     }
 
     if (CreateNewFileWithMods(g_filePath, newID, newName)) {
-        MessageBoxA(NULL, "Success!", "OK", MB_OK);
+        MessageBoxA(NULL, "Success! New file created", "OK", MB_OK);
     } else {
-        MessageBoxA(NULL, "Failed", "Error", MB_ICONERROR);
+        MessageBoxA(NULL, "Failed to create new file", "Error", MB_ICONERROR);
     }
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    switch(msg) {
+    switch (msg) {
         case WM_CREATE:
             CreateWindowA("STATIC", "File:", WS_CHILD|WS_VISIBLE,20,20,50,20,hWnd,NULL,NULL,NULL);
             CreateWindowA("EDIT", "", WS_CHILD|WS_VISIBLE|WS_BORDER,80,18,330,24,hWnd,(HMENU)IDC_EDIT_PATH,NULL,NULL);
@@ -267,7 +252,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             HWND eTid  = GetDlgItem(hWnd, IDC_EDIT_TID);
             HWND eName = GetDlgItem(hWnd, IDC_EDIT_GAMENAME);
 
-            switch(LOWORD(wParam)) {
+            switch (LOWORD(wParam)) {
                 case IDC_BTN_BROWSE: BrowseFile(ePath, eTid, eName); break;
                 case IDC_BTN_MODIFY: DoModify(eTid, eName); break;
                 case IDC_BTN_COPY_ORIG:
@@ -292,7 +277,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     AllocConsole();
     g_logConsole = freopen("CONOUT$", "w", stdout);
-    Log("===== 3DS Tool - DEBUG VERSION =====");
+    Log("===== 3DS Title & Name Editor (No Magic Detect) =====");
 
     WNDCLASSA wc = {0};
     wc.lpfnWndProc = WndProc;
@@ -300,7 +285,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     wc.lpszClassName = "3DSTool";
     RegisterClassA(&wc);
 
-    HWND hWnd = CreateWindowExA(0, wc.lpszClassName, "3DS Editor (Debug)",
+    HWND hWnd = CreateWindowExA(0, wc.lpszClassName, "3DS Editor",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
         CW_USEDEFAULT, CW_USEDEFAULT, 540, 240,
         NULL, NULL, hInst, NULL);
@@ -309,7 +294,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     UpdateWindow(hWnd);
 
     MSG m;
-    while(GetMessage(&m,0,0,0)) {
+    while (GetMessage(&m, 0, 0, 0)) {
         TranslateMessage(&m);
         DispatchMessage(&m);
     }
